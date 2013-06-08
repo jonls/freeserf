@@ -750,7 +750,7 @@ handle_serf_entering_building_state(serf_t *serf)
 
 	if (serf->counter < 0 || serf->counter <= serf->s.entering_building.slope_len) {
 		if (MAP_OBJ_INDEX(serf->pos) == 0 ||
-		    BIT_TEST(game_get_building(MAP_OBJ_INDEX(serf->pos))->serf, 5)) { /* Burning */
+		    BUILDING_IS_BURNING(game_get_building(MAP_OBJ_INDEX(serf->pos)))) {
 			serf_log_state_change(serf, SERF_STATE_LOST);
 			serf->state = SERF_STATE_LOST;
 			serf->s.lost.field_B = 0;
@@ -823,6 +823,17 @@ handle_serf_entering_building_state(serf_t *serf)
 			break;
 		case SERF_4:
 			map_set_serf_index(serf->pos, 0);
+
+			if (serf->s.entering_building.field_B != 0) {
+				int res = serf->s.walking.res - 1; /* Offset by one, because 0 means none. */
+				building_t *building = game_get_building(MAP_OBJ_INDEX(serf->pos));
+				if (!BUILDING_IS_BURNING(building) &&
+				    BUILDING_HAS_INVENTORY(building)) {
+					inventory_t *inventory = building->u.inventory;
+					inventory->resources[res] = min(inventory->resources[res]+1, 50000);
+				}
+			}
+
 			serf_log_state_change(serf, SERF_STATE_WAIT_FOR_RESOURCE_OUT);
 			serf->state = SERF_STATE_WAIT_FOR_RESOURCE_OUT;
 			serf->counter = 63;
@@ -1584,11 +1595,16 @@ handle_serf_move_resource_out_state(serf_t *serf)
 		return;
 	}
 
+	int empty_slots = 0;
 	flag_t *flag = game_get_flag(MAP_OBJ_INDEX(MAP_MOVE_DOWN_RIGHT(serf->pos)));
-	if (flag->res_waiting[0] != 0 && flag->res_waiting[1] != 0 &&
-	    flag->res_waiting[2] != 0 && flag->res_waiting[3] != 0 &&
-	    flag->res_waiting[4] != 0 && flag->res_waiting[5] != 0 &&
-	    flag->res_waiting[6] != 0 && flag->res_waiting[7] != 0) {
+	for (int i = 0; i < FLAG_MAX_RES_COUNT; i++) {
+		if (flag->res_waiting[i] == 0 ||
+		    flag->res_dest[i] == FLAG_INDEX(flag)) {
+			empty_slots += 1;
+		}
+	}
+
+	if (empty_slots < 1) {
 		/* All resource slots at flag are occupied, wait */
 		serf->animation = 82;
 		serf->counter = 0;
@@ -1608,54 +1624,90 @@ handle_serf_move_resource_out_state(serf_t *serf)
 static void
 handle_serf_wait_for_resource_out_state(serf_t *serf)
 {
-	if (serf->counter != 0) {
-		uint16_t delta = game.tick - serf->tick;
-		serf->tick = game.tick;
-		serf->counter -= delta;
+	uint16_t delta = game.tick - serf->tick;
+	serf->tick = game.tick;
+	serf->counter -= delta;
 
-		if (serf->counter >= 0) return;
+	while (serf->counter < 0) {
+		building_t *building = game_get_building(MAP_OBJ_INDEX(serf->pos));
+		inventory_t *inventory = building->u.inventory;
+		if (inventory->serfs[SERF_4] != 0) return;
 
-		serf->counter = 0;
+		flag_t *flag = game_get_flag(building->flg_index);
+
+		int resource_to_fetch = 0;
+		for (int i = 0; i < FLAG_MAX_RES_COUNT; i++) {
+			if (flag->res_waiting[i] != 0 &&
+			    flag->res_dest[i] == FLAG_INDEX(flag)) {
+				resource_to_fetch = 1;
+				break;
+			}
+		}
+
+		if (inventory->out_queue[0] == -1 && !resource_to_fetch) return;
+
+		serf_log_state_change(serf, SERF_STATE_MOVE_RESOURCE_OUT);
+		serf->state = SERF_STATE_MOVE_RESOURCE_OUT;
+		serf->s.move_resource_out.res = inventory->out_queue[0] + 1;
+		serf->s.move_resource_out.res_dest = inventory->out_dest[0];
+		serf->s.move_resource_out.next_state = SERF_STATE_DROP_RESOURCE_OUT;
+
+		if (inventory->out_queue[0] >= 0) {
+			inventory->out_queue[0] = inventory->out_queue[1];
+			inventory->out_queue[1] = -1;
+			inventory->out_dest[0] = inventory->out_dest[1];
+		}
+		return;
 	}
-
-	building_t *building = game_get_building(MAP_OBJ_INDEX(serf->pos));
-	inventory_t *inventory = building->u.inventory;
-	if (inventory->serfs[SERF_4] != 0 || inventory->out_queue[0] == -1) return;
-
-	serf_log_state_change(serf, SERF_STATE_MOVE_RESOURCE_OUT);
-	serf->state = SERF_STATE_MOVE_RESOURCE_OUT;
-	serf->s.move_resource_out.res = inventory->out_queue[0] + 1;
-	serf->s.move_resource_out.res_dest = inventory->out_dest[0];
-	serf->s.move_resource_out.next_state = SERF_STATE_DROP_RESOURCE_OUT;
-
-	inventory->out_queue[0] = inventory->out_queue[1];
-	inventory->out_queue[1] = -1;
-	inventory->out_dest[0] = inventory->out_dest[1];
-
-	/*handle_serf_move_resource_out_state(serf);*//* why isn't a state switch enough? */
 }
 
 static void
 handle_serf_drop_resource_out_state(serf_t *serf)
 {
-	flag_t *flag = game_get_flag(MAP_OBJ_INDEX(serf->pos));
-	int i = -1;
-	for (i = 0; i < FLAG_MAX_RES_COUNT; i++) {
-		/* Guaranteed to find a free slot because
-		   the map position has been reserved since
-		   a free position was found. */
-		if (flag->res_waiting[i] == 0) break;
-	}
-
-	assert(i >= 0);
-
-	flag->res_waiting[i] = serf->s.move_resource_out.res;
-	flag->res_dest[i] = serf->s.move_resource_out.res_dest;
-	flag->endpoint |= BIT(7); /* Resources waiting */
+	int out_res = serf->s.move_resource_out.res;
+	int out_dest = serf->s.move_resource_out.res_dest;
 
 	serf_log_state_change(serf, SERF_STATE_READY_TO_ENTER);
 	serf->state = SERF_STATE_READY_TO_ENTER;
 	serf->s.ready_to_enter.field_B = 0;
+
+	flag_t *flag = game_get_flag(MAP_OBJ_INDEX(serf->pos));
+
+	/* Check if any resource should be brought back inside */
+	int slot = -1;
+	for (int i = 0; i < FLAG_MAX_RES_COUNT; i++) {
+		if (flag->res_waiting[i] != 0 &&
+		    flag->res_dest[i] == FLAG_INDEX(flag)) {
+			slot = i;
+			break;
+		}
+	}
+
+	if (slot >= 0) {
+		serf->s.ready_to_enter.field_B = flag->res_waiting[slot];
+		flag->res_waiting[slot] = 0;
+		flag->res_dest[slot] = 0;
+	}
+
+	if (slot < 0) {
+		for (int i = 0; i < FLAG_MAX_RES_COUNT; i++) {
+			/* Guaranteed to find a free slot because
+			   the map position has been reserved since
+			   a free position was found. */
+			if (flag->res_waiting[i] == 0) {
+				slot = i;
+				break;
+			}
+		}
+	}
+
+	assert(slot >= 0);
+
+	if (out_res > 0) {
+		flag->res_waiting[slot] = out_res;
+		flag->res_dest[slot] = out_dest;
+		flag->endpoint |= BIT(7); /* Resources waiting */
+	}
 }
 
 static void
