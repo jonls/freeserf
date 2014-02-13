@@ -26,7 +26,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <unistd.h>
+
+#if _MSC_VER
+  #pragma warning(disable:4996)
+#else
+  #include <unistd.h>
+#endif
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -117,6 +123,13 @@ gfx_load_file(const char *path)
 	fclose(f);
 #endif
 
+	/* Check that data file is decompressed. */
+	if (!memcmp(sprites, "TPWM", 4)) {
+		LOGE("gfx", "Data file is compressed! Please run the installer"
+		     " from the original game to decompress the data file.");
+		return -1;
+	}
+
 	/* Read the number of entries in the index table.
 	   Some entries are undefined (size and offset are zero). */
 	entry_count = le32toh(*((uint32_t *)sprites + 1)) + 1;
@@ -160,10 +173,10 @@ gfx_unload()
 void *
 gfx_get_data_object(int index, size_t *size)
 {
-	assert(index > 0 && index < entry_count);
+	assert(index > 0 && (unsigned int)index < entry_count);
 
-	spae_entry_t *entries = sprites;
-	uint8_t *bytes = sprites;
+	spae_entry_t *entries = (spae_entry_t *) sprites;
+	uint8_t *bytes = (uint8_t *) sprites;
 
 	size_t offset = le32toh(entries[index].offset);
 	assert(offset != 0);
@@ -218,10 +231,10 @@ gfx_draw_char_sprite(int x, int y, unsigned int c, int color, int shadow, frame_
 	if (s < 0) return;
 
 	if (shadow) {
-		sdl_draw_transp_sprite(gfx_get_data_object(DATA_FONT_SHADOW_BASE + s, NULL),
+		sdl_draw_transp_sprite((const sprite_t *)gfx_get_data_object(DATA_FONT_SHADOW_BASE + s, NULL),
 				       x, y, 0, 0, shadow, dest);
 	}
-	sdl_draw_transp_sprite(gfx_get_data_object(DATA_FONT_BASE + s, NULL),
+	sdl_draw_transp_sprite((const sprite_t *)gfx_get_data_object(DATA_FONT_BASE + s, NULL),
 			       x, y, 0, 0, color, dest);
 }
 
@@ -236,6 +249,22 @@ gfx_draw_string(int x, int y, int color, int shadow, frame_t *dest, const char *
 
 		unsigned char c = *str++;
 		gfx_draw_char_sprite(x, y, c, color, shadow, dest);
+	}
+}
+
+/* Draw the length of a string str at x, y in the dest frame. */
+void
+gfx_draw_n_string(int x, int y, int color, int shadow, frame_t *dest, const char *str, int length)
+{
+	for (; length > 0 && *str != 0; length--) {
+
+		if (/*string_bg*/ 0) {
+			gfx_fill_rect(x, y, 8, 8, 0, dest);
+		}
+
+		unsigned char c = *str++;
+		gfx_draw_char_sprite(x, y, c, color, shadow, dest);
+		x += 8;
 	}
 }
 
@@ -268,7 +297,7 @@ gfx_draw_number(int x, int y, int color, int shadow, frame_t *dest, int n)
 void
 gfx_draw_sprite(int x, int y, int sprite, frame_t *dest)
 {
-	sprite_t *spr = gfx_get_data_object(sprite, NULL);
+	sprite_t *spr = (sprite_t *) gfx_get_data_object(sprite, NULL);
 	if (spr != NULL) sdl_draw_sprite(spr, x, y, dest);
 }
 
@@ -277,7 +306,7 @@ gfx_draw_sprite(int x, int y, int sprite, frame_t *dest)
 void
 gfx_draw_transp_sprite(int x, int y, int sprite, frame_t *dest)
 {
-	sprite_t *spr = gfx_get_data_object(sprite, NULL);
+	sprite_t *spr = (sprite_t *) gfx_get_data_object(sprite, NULL);
 	if (spr != NULL) sdl_draw_transp_sprite(spr, x, y, 0, 0, 0, dest);
 }
 
@@ -292,7 +321,7 @@ gfx_fill_rect(int x, int y, int width, int height, int color, frame_t *dest)
 void
 gfx_data_fixup()
 {
-	spae_entry_t *entries = sprites;
+	spae_entry_t *entries = (spae_entry_t *) sprites;
 
 	/* Fill out some undefined spaces in the index from other
 	   places in the data file index. */
@@ -324,7 +353,7 @@ gfx_data_fixup()
 void
 gfx_set_palette(int palette)
 {
-	uint8_t *pal = gfx_get_data_object(palette, NULL);
+	uint8_t *pal = (uint8_t *)gfx_get_data_object(palette, NULL);
 	sdl_set_palette(pal);
 }
 
@@ -336,7 +365,7 @@ gfx_unpack_transparent_sprite(void *dest, const void *src, size_t destlen, int o
 	uint8_t *bdest = (uint8_t *)dest;
 
 	int i = 0;
-	int j = 0;
+	unsigned int j = 0;
 	while (j < destlen) {
 		j += bsrc[i];
 		int n = bsrc[i+1];
@@ -362,7 +391,7 @@ gfx_unpack_bitmap_sprite(void *dest, const void *src, size_t destlen, int value)
 	uint8_t *bdest = (uint8_t *)dest;
 
 	int i = 0;
-	int j = 0;
+	Uint32 j = 0;
 	while (j < destlen) {
 		j += bsrc[i];
 		int n = bsrc[i+1];
