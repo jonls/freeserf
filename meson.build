@@ -8,6 +8,9 @@ sdl2 = dependency('sdl2', required: true)
 sdl2_mixer = dependency('SDL2_mixer', required: false)
 libxmp = dependency('libxmp', required: false)
 
+gtest = subproject('gtest')
+gtest_dep = gtest.get_variable('gtest_with_main_dep')
+
 game_src = [
   'src/building.cc',
   'src/debug.cc',
@@ -53,6 +56,12 @@ other_src = [
   'src/game-manager.cc',
 ]
 
+test_game_src = [
+  'tests/test_map_geometry.cc',
+  'tests/test_map.cc',
+  'tests/test_save_game.cc',
+]
+
 version_vcs = vcs_tag(
   input: 'src/version-vcs.h.in',
   output: 'version-vcs.h',
@@ -72,28 +81,9 @@ executable(
   sources: ['src/freeserf.cc'] + game_src + audio_src + other_src,
   dependencies: freeserf_dependencies)
 
-test_game_src = [
-    'tests/test_map_geometry.cc',
-    'tests/test_map.cc',
-    'tests/test_save_game.cc',
-  ]
+test_game = executable(
+  'test_game',
+  sources: test_game_src + game_src,
+  dependencies: gtest_dep)
 
-test_map_geometry = executable(
-  'test_map_geometry',
-  sources: ['tests/test_map_geometry.cc'] + game_src)
-test_map = executable(
-  'test_map',
-  sources: ['tests/test_map.cc'] + game_src)
-test_save_game = executable(
-  'test_save_game',
-  sources: ['tests/test_save_game.cc'] + game_src)
-
-test(
-  'test map geometry', test_map_geometry,
-  env: ['srcdir=' + meson.current_source_dir()])
-test(
-  'test map', test_map_geometry,
-  env: ['srcdir=' + meson.current_source_dir()])
-test(
-  'test save game', test_map_geometry,
-  env: ['srcdir=' + meson.current_source_dir()])
+test('test game', test_game, env: ['srcdir=' + meson.current_source_dir()])
