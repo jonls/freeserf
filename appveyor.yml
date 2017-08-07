@@ -16,6 +16,17 @@ cache:
 install:
   - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-http-proxy.ps1'))
 
+  # Meson
+  - ps: |
+      if ($env:arch -Match "x86") {
+        $env:MESON_PYTHON_PATH = "C:\python34"
+      } else {
+        $env:MESON_PYTHON_PATH = "C:\python34-x64"
+      }
+  - cmd: |
+      SET PATH=%MESON_PYTHON_PATH%;%MESON_PYTHON_PATH%\\Scripts;%PATH%"
+      pip install meson
+
   # SDL2
   - ps: |
       $SDL_VERSION = "2.0.4"
@@ -64,17 +75,18 @@ install:
       $env:XMP_LIB = "$XMP_PREFIX\lib"
 
 build_script:
-  - msbuild windows\freeserf.sln
+  - meson --backend vs2015 windows_build
+  - msbuild windows_build\freeserf.sln
 
 after_build:
   - ps: |
       $ZIP_BASE = "freeserf-VC-$env:PLATFORM-$env:CONFIGURATION"
       $ZIP_FILE = "$($ZIP_BASE).zip"
       md $ZIP_BASE
-      Copy-Item -Path windows\$env:PLATFORM\$env:CONFIGURATION\freeserf.exe -Destination $ZIP_BASE\
+      Copy-Item -Path windows_build\$env:PLATFORM\$env:CONFIGURATION\freeserf.exe -Destination $ZIP_BASE\
       Copy-Item -Path README.md -Destination $ZIP_BASE\README.txt
-      Copy-Item -Path windows\$env:PLATFORM\$env:CONFIGURATION\SDL2.dll -Destination $ZIP_BASE\
-      Copy-Item -Path windows\$env:PLATFORM\$env:CONFIGURATION\SDL2_mixer.dll -Destination $ZIP_BASE\
-      Copy-Item -Path windows\$env:PLATFORM\$env:CONFIGURATION\libxmp.dll -Destination $ZIP_BASE\
+      Copy-Item -Path windows_build\$env:PLATFORM\$env:CONFIGURATION\SDL2.dll -Destination $ZIP_BASE\
+      Copy-Item -Path windows_build\$env:PLATFORM\$env:CONFIGURATION\SDL2_mixer.dll -Destination $ZIP_BASE\
+      Copy-Item -Path windows_build\$env:PLATFORM\$env:CONFIGURATION\libxmp.dll -Destination $ZIP_BASE\
       7z a $ZIP_FILE $ZIP_BASE\*
       Push-AppveyorArtifact $ZIP_FILE
